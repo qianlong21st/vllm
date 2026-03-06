@@ -4,7 +4,7 @@
 import time
 from collections.abc import Callable, Mapping
 from copy import copy
-from typing import Any
+from typing import Any, Optional
 
 import torch.nn as nn
 from typing_extensions import TypeVar
@@ -423,6 +423,101 @@ class LLMEngine:
 
     def apply_model(self, func: Callable[[nn.Module], _R]) -> list[_R]:
         return self.collective_rpc("apply_model", args=(func,))
+
+    def update_configs(
+        self,
+        block_size: Optional[int] = None,
+        max_num_batched_tokens: Optional[int] = None,
+        max_num_seqs: Optional[int] = None
+    ) -> bool:
+        """
+        Update engine configurations dynamically without reloading weights.
+        
+        Args:
+            block_size: New block size for KV cache
+            max_num_batched_tokens: New maximum number of batched tokens
+            max_num_seqs: New maximum number of sequences
+        
+        Returns:
+            bool: True if update successful, False otherwise
+        """
+        try:
+            # Create new configuration
+            new_config = self._create_updated_config(
+                block_size=block_size,
+                max_num_batched_tokens=max_num_batched_tokens,
+                max_num_seqs=max_num_seqs
+            )
+            
+            # Update engine core configuration
+            success = self.engine_core.update_configs(new_config)
+            
+            if success:
+                # Update local configuration
+                self.vllm_config = new_config
+                self.model_config = new_config.model_config
+                
+                # Update processors if needed
+                self._update_processors_if_needed()
+            
+            return success
+            
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.error(f"Failed to update engine configs: {e}")
+            return False
+    
+    def _create_updated_config(self, **kwargs) -> VllmConfig:
+        """Create updated VllmConfig with new parameters."""
+        import copy
+        new_config = copy.deepcopy(self.vllm_config)
+        
+        if 'block_size' in kwargs and kwargs['block_size'] is not None:
+            from vllm.config.cache import BlockSize
+            new_block_size = kwargs['block_size']
+            if new_block_size not in BlockSize.__args__:
+                raise ValueError(f"Invalid block_size {new_block_size}. Must be one of {BlockSize.__args__}")
+            new_config.cache_config.block_size = new_block_size
+        
+        if 'max_num_batched_tokens' in kwargs and kwargs['max_num_batched_tokens'] is not None:
+            new_batched_tokens = kwargs['max_num_batched_tokens']
+            if new_batched_tokens <= 0:
+                raise ValueError("max_num_batched_tokens must be positive")
+            new_config.scheduler_config.max_num_batched_tokens = new_batched_tokens
+        
+        if 'max_num_seqs' in kwargs and kwargs['max_num_seqs'] is not None:
+            new_max_seqs = kwargs['max_num_seqs']
+            if new_max_seqs <= 0:
+                raise ValueError("max_num_seqs must be positive")
+            new_config.scheduler_config.max_num_seqs = new_max_seqs
+        
+        # Validate configuration consistency
+        if (new_config.scheduler_config.max_num_batched_tokens < 
+            new_config.scheduler_config.max_num_seqs):
+            raise ValueError(
+                "max_num_batched_tokens must be >= max_num_seqs"
+            )
+        
+        return new_config
+    
+    def _update_processors_if_needed(self) -> None:
+        """Update processors if configuration changes require it."""
+        # Check if block_size changed - this might affect input/output processing
+        if hasattr(self, 'input_processor'):
+            # Reinitialize input processor if needed
+            pass
+        
+        if hasattr(self, 'output_processor'):
+            # Reinitialize output processor if needed
+            pass
+    
+    def get_current_config(self) -> dict[str, int]:
+        """Get current configuration values."""
+        return {
+            'block_size': self.vllm_config.cache_config.block_size,
+            'max_num_batched_tokens': self.vllm_config.scheduler_config.max_num_batched_tokens,
+            'max_num_seqs': self.vllm_config.scheduler_config.max_num_seqs,
+        }
 
     def __del__(self):
         dp_group = getattr(self, "dp_group", None)

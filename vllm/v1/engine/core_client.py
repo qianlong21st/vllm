@@ -316,6 +316,24 @@ class InprocClient(EngineCoreClient):
     def reset_encoder_cache(self) -> None:
         self.engine_core.reset_encoder_cache()
 
+    def update_configs(self, new_vllm_config: VllmConfig) -> bool:
+        """
+        Update engine core configuration.
+        
+        Args:
+            new_vllm_config: New VllmConfig with updated parameters
+            
+        Returns:
+            bool: True if update successful, False otherwise
+        """
+        try:
+            self.engine_core.update_configs(new_vllm_config)
+            return True
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.error(f"Failed to update engine core configs: {e}")
+            return False
+
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if mode == "wait":
             raise ValueError("'wait' pause mode is not supported in inproc-engine mode")

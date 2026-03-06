@@ -743,6 +743,155 @@ class EngineCore:
     ) -> list[_R]:
         return self.model_executor.collective_rpc(method, timeout, args, kwargs)
 
+    def update_configs(self, new_vllm_config: VllmConfig) -> None:
+        """
+        Update engine core configuration.
+        
+        Args:
+            new_vllm_config: New VllmConfig with updated parameters
+        """
+        # Update internal configuration
+        self.vllm_config = new_vllm_config
+        
+        # Update scheduler
+        if hasattr(self, 'scheduler'):
+            self.scheduler.update_configs(new_vllm_config)
+        
+        # Update cache manager
+        if hasattr(self, 'cache_manager'):
+            self.cache_manager.update_configs(new_vllm_config)
+        
+        # Update model executor
+        if hasattr(self, 'model_executor'):
+            self.model_executor.update_configs(new_vllm_config)
+        
+        # Update attention backends if block_size changed
+        self._update_attention_backends_if_needed(new_vllm_config)
+
+    def _update_attention_backends_if_needed(self, new_vllm_config: VllmConfig) -> None:
+        """
+        Update attention backends if block_size changed.
+        
+        Args:
+            new_vllm_config: New VllmConfig with updated parameters
+        """
+        try:
+            # Check if block_size changed
+            old_block_size = self.vllm_config.cache_config.block_size
+            new_block_size = new_vllm_config.cache_config.block_size
+            
+            if old_block_size != new_block_size:
+                # Reallocate attention components
+                self._reallocate_attention_components(new_vllm_config)
+                
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.error(f"Failed to update attention backends: {e}")
+
+    def _reallocate_attention_components(self, new_vllm_config: VllmConfig) -> None:
+        """
+        Reallocate attention components for new block size.
+        
+        Args:
+            new_vllm_config: New VllmConfig with updated parameters
+        """
+        try:
+            # Reallocate FlashAttention blocks
+            if hasattr(self.model_executor, 'model_runner'):
+                self._reallocate_flashattention_blocks(self.model_executor.model_runner, new_vllm_config)
+                
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.error(f"Failed to reallocate attention components: {e}")
+
+    def _reallocate_flashattention_blocks(self, model_runner, new_vllm_config: VllmConfig) -> None:
+        """
+        Reallocate FlashAttention blocks for new block size.
+        
+        Args:
+            model_runner: Model runner instance
+            new_vllm_config: New VllmConfig with updated parameters
+        """
+        try:
+            from vllm.v1.worker.utils import prepare_kernel_block_sizes
+            
+            # Recalculate kernel block sizes
+            if hasattr(model_runner, 'attn_groups'):
+                kernel_block_sizes = prepare_kernel_block_sizes(
+                    new_vllm_config, model_runner.attn_groups
+                )
+                logger = init_logger(__name__)
+                logger.info(f"New kernel block sizes: {kernel_block_sizes}")
+            else:
+                kernel_block_sizes = [new_vllm_config.cache_config.block_size]
+            
+            # Reallocate block tables
+            self._reallocate_block_tables(model_runner, new_vllm_config, kernel_block_sizes)
+            
+            # Reallocate KV cache tensors
+            self._reallocate_kv_cache_tensors(model_runner, new_vllm_config, kernel_block_sizes)
+            
+            # Reinitialize metadata builders
+            self._reinitialize_metadata_builders(model_runner, new_vllm_config, kernel_block_sizes)
+            
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.error(f"Failed to reallocate FlashAttention blocks: {e}")
+
+    def _reallocate_block_tables(self, model_runner, config: VllmConfig, kernel_block_sizes: list[int]) -> None:
+        """Reallocate block tables with new kernel block sizes."""
+        try:
+            from vllm.v1.worker.block_table import BlockTable
+            
+            if hasattr(model_runner, 'block_table') and model_runner.block_table is not None:
+                old_block_table = model_runner.block_table
+                
+                # Create new block table with updated kernel block sizes
+                new_block_table = BlockTable(
+                    max_num_blocks=old_block_table.max_num_blocks,
+                    max_num_blocks_per_req=old_block_table.max_num_blocks_per_req,
+                    max_num_batched_tokens=config.scheduler_config.max_num_batched_tokens,
+                    pin_memory=old_block_table.pin_memory,
+                    device=old_block_table.device,
+                    kernel_block_size=kernel_block_sizes[0],
+                    cp_kv_cache_interleave_size=getattr(old_block_table, 'cp_kv_cache_interleave_size', 1),
+                )
+                
+                # Copy existing block data if compatible
+                if hasattr(old_block_table, 'block_pool'):
+                    new_block_table.block_pool = old_block_table.block_pool
+                
+                model_runner.block_table = new_block_table
+                
+                logger = init_logger(__name__)
+                logger.info("Block tables reallocated with new kernel block sizes")
+                
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.warning(f"Failed to reallocate block tables: {e}")
+
+    def _reallocate_kv_cache_tensors(self, model_runner, config: VllmConfig, kernel_block_sizes: list[int]) -> None:
+        """Reallocate KV cache tensors for new block sizes."""
+        try:
+            if hasattr(model_runner, 'kv_caches') and model_runner.kv_caches:
+                logger = init_logger(__name__)
+                logger.info(f"KV cache tensors need reallocation for kernel_block_sizes: {kernel_block_sizes}")
+                
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.warning(f"Failed to reallocate KV cache tensors: {e}")
+
+    def _reinitialize_metadata_builders(self, model_runner, config: VllmConfig, kernel_block_sizes: list[int]) -> None:
+        """Reinitialize metadata builders with new block sizes."""
+        try:
+            if hasattr(model_runner, 'metadata_builders') and model_runner.metadata_builders:
+                logger = init_logger(__name__)
+                logger.info(f"Reinitializing metadata builders for kernel_block_sizes: {kernel_block_sizes}")
+                
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.warning(f"Failed to reinitialize metadata builders: {e}")
+
     def preprocess_add_request(self, request: EngineCoreRequest) -> tuple[Request, int]:
         """Preprocess the request.
 

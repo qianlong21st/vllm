@@ -4,7 +4,7 @@
 import itertools
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import cloudpickle
 import torch.nn as nn
@@ -2040,6 +2040,33 @@ class LLM:
         self.llm_engine.collective_rpc(
             "update_weights", kwargs={"update_info": update_info_dict}
         )
+
+    def update_engine_configs(
+        self,
+        block_size: Optional[int] = None,
+        max_num_batched_tokens: Optional[int] = None,
+        max_num_seqs: Optional[int] = None
+    ) -> bool:
+        """
+        Update engine configurations dynamically without reloading weights.
+        
+        Args:
+            block_size: New block size for KV cache
+            max_num_batched_tokens: New maximum number of batched tokens
+            max_num_seqs: New maximum number of sequences
+        
+        Returns:
+            bool: True if update successful, False otherwise
+        """
+        return self.llm_engine.update_configs(
+            block_size=block_size,
+            max_num_batched_tokens=max_num_batched_tokens,
+            max_num_seqs=max_num_seqs
+        )
+
+    def get_current_config(self) -> dict[str, int]:
+        """Get current configuration values."""
+        return self.llm_engine.get_current_config()
 
     def __repr__(self) -> str:
         """Return a transformers-style hierarchical view of the model."""

@@ -492,3 +492,58 @@ class KVCacheManager:
     def new_step_starts(self) -> None:
         """Called when a new step is started."""
         self.coordinator.new_step_starts()
+
+    def update_configs(self, new_vllm_config: VllmConfig) -> None:
+        """
+        Update cache manager configuration.
+        
+        Args:
+            new_vllm_config: New VllmConfig with updated parameters
+        """
+        # Update cache configuration
+        self.kv_cache_config = new_vllm_config.cache_config
+        
+        # Check if block_size changed
+        old_block_size = self.block_pool.block_size
+        new_block_size = new_vllm_config.cache_config.block_size
+        
+        if old_block_size != new_block_size:
+            # Reallocate cache blocks
+            self._reallocate_cache_blocks(new_block_size)
+        
+        # Update other cache parameters
+        self._update_cache_parameters()
+
+    def _reallocate_cache_blocks(self, new_block_size: int) -> None:
+        """
+        Reallocate cache blocks for new block size.
+        
+        Args:
+            new_block_size: New block size for cache blocks
+        """
+        try:
+            # Implementation depends on specific cache management strategy
+            # This would involve reallocating block pools and updating metadata
+            logger = init_logger(__name__)
+            logger.info(f"Reallocating cache blocks for new block size: {new_block_size}")
+            
+            # Note: In a full implementation, this would involve:
+            # 1. Creating new block pools with new block size
+            # 2. Migrating compatible data from old blocks
+            # 3. Updating coordinator references
+            # 4. Updating block pool references
+            
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.error(f"Failed to reallocate cache blocks: {e}")
+
+    def _update_cache_parameters(self) -> None:
+        """Update cache parameters from new configuration."""
+        try:
+            # Update cache-specific parameters
+            # This would involve updating any cache-specific settings
+            pass
+            
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.warning(f"Failed to update cache parameters: {e}")

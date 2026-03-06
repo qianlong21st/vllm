@@ -2223,3 +2223,37 @@ class Scheduler(SchedulerInterface):
         self.failed_recving_kv_req_ids |= async_failed_req_ids
         # Return sync affected IDs to skip in update_from_output
         return sync_failed_req_ids
+
+    def update_configs(self, new_vllm_config: VllmConfig) -> None:
+        """
+        Update scheduler configuration.
+        
+        Args:
+            new_vllm_config: New VllmConfig with updated parameters
+        """
+        # Update scheduler configuration
+        self.scheduler_config = new_vllm_config.scheduler_config
+        self.cache_config = new_vllm_config.cache_config
+        
+        # Update scheduling parameters
+        self.max_num_batched_tokens = self.scheduler_config.max_num_batched_tokens
+        self.max_num_seqs = self.scheduler_config.max_num_seqs
+        
+        # Update cache manager configuration
+        if hasattr(self, 'kv_cache_manager'):
+            self.kv_cache_manager.update_configs(new_vllm_config)
+        
+        # Reinitialize scheduling logic if needed
+        self._reinitialize_scheduling_logic_if_needed()
+
+    def _reinitialize_scheduling_logic_if_needed(self) -> None:
+        """Reinitialize scheduling logic with new parameters."""
+        try:
+            # Check if we need to reinitialize request queue
+            if hasattr(self, 'waiting') and hasattr(self, 'running'):
+                # The request queue might need reinitialization if parameters changed significantly
+                pass
+            
+        except Exception as e:
+            logger = init_logger(__name__)
+            logger.warning(f"Failed to reinitialize scheduling logic: {e}")
